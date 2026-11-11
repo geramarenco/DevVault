@@ -1,0 +1,52 @@
+name: Compilar DevVault para Windows
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    # En pull requests sólo continúa si se hizo merge; manualmente siempre permite compilar.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Obtener código de main
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Configurar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restaurar caché de Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar paquete Windows
+        run: npm run tauri build
+
+      - name: Publicar instaladores y ejecutable
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevVault-windows-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            src-tauri/target/release/DevVault.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*-setup.exe
