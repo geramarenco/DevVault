@@ -46,3 +46,34 @@ kbd{display:inline-flex;align-items:center;line-height:1;padding:3px 6px;border:
 .gate .warn{display:block;margin-top:16px;color:#a9b9af;font-size:12px}
 .gate output.error{color:#f19a8e}
 ::selection{background:#77e1a855}
+
+/* Search clear */
+.list header .clear{width:26px;height:26px;flex:none;display:grid;place-items:center;font-size:18px;line-height:1;color:#a9b9af;background:#243229}
+.list header .clear:hover{color:#eef9f1}
+/* Toast */
+.toast{animation:toast-in .2s cubic-bezier(.16,1,.3,1)}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,8px)}}
+/* Tag chips */
+.tag-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding:6px 8px;border:1px solid #34453d;background:#17211c;border-radius:8px;font-weight:400}
+.tag-input:focus-within{outline:2px solid #73e2a7;outline-offset:2px}
+.tag-input span{display:inline-flex;align-items:center;gap:4px;font:12px Consolas,monospace;background:#213128;color:#86d3a4;border-radius:20px;padding:3px 4px 3px 9px}
+.tag-input span button{width:18px;height:18px;padding:0;border-radius:50%;line-height:1;color:#a9b9af}
+.tag-input span button:hover{background:#2f4537;color:#eef9f1}
+.editor .tag-input input{flex:1;min-width:140px;margin:0;border:0;background:transparent;padding:4px 2px;outline:none}
+.opt{font-weight:400;color:#84978b;font-size:11px}
+.tags{flex-wrap:wrap}
+/* Field editor */
+.field-edit{grid-template-columns:1fr auto auto;padding:12px;border:1px solid #2c3d33;border-radius:10px}
+.field-edit textarea{grid-column:1/-1;font:13px Consolas,monospace;resize:vertical;min-height:64px}
+.field-edit .row-actions{display:flex;gap:4px}
+.field-edit .row-actions button{padding:8px 10px;background:#243229;grid-column:auto}
+.field-edit .row-actions button.icon{width:34px;padding:0}
+.field-edit .row-actions button:disabled{opacity:.35;cursor:not-allowed}
+.switch{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#b5c7bc;cursor:pointer;user-select:none}
+.switch input{position:absolute;opacity:0;width:1px;height:1px}
+.switch span{position:relative;width:34px;height:20px;border-radius:20px;background:#34453d;transition:background .2s}
+.switch span::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#cfdcd3;transition:transform .2s cubic-bezier(.16,1,.3,1)}
+.switch input:checked+span{background:#77e1a8}
+.switch input:checked+span::after{transform:translateX(14px);background:#122018}
+.switch input:focus-visible+span{outline:2px solid #73e2a7;outline-offset:2px}
+@media(max-width:600px){.field-edit{grid-template-columns:1fr}.field-edit textarea{grid-column:1}}
