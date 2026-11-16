@@ -39,6 +39,9 @@ jobs:
 
       - name: Generar paquete Windows
         run: npm run tauri build
+        env:
+          DEVVAULT_GDRIVE_CLIENT_ID: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_ID }}
+          DEVVAULT_GDRIVE_CLIENT_SECRET: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_SECRET }}
 
       - name: Publicar instaladores y ejecutable
         uses: actions/upload-artifact@v4

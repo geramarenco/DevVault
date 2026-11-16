@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use zeroize::Zeroize;
 
+mod gdrive;
+
 const FORMAT: u8 = 1;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -55,5 +57,5 @@ fn clear_clipboard_if_matches(app: tauri::AppHandle, value: String) -> Result<()
 }
 
 pub fn run() {
-  tauri::Builder::default().plugin(tauri_plugin_clipboard_manager::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_fs::init()).plugin(tauri_plugin_opener::init()).invoke_handler(tauri::generate_handler![encrypt_vault, decrypt_vault, clear_clipboard_if_matches]).run(tauri::generate_context!()).expect("error al iniciar DevVault");
+  tauri::Builder::default().plugin(tauri_plugin_clipboard_manager::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_fs::init()).plugin(tauri_plugin_opener::init()).manage(gdrive::DriveState::default()).invoke_handler(tauri::generate_handler![encrypt_vault, decrypt_vault, clear_clipboard_if_matches, gdrive::gdrive_status, gdrive::gdrive_connect, gdrive::gdrive_cancel_connect, gdrive::gdrive_disconnect, gdrive::gdrive_list_backups, gdrive::gdrive_upload_backup, gdrive::gdrive_download_backup]).run(tauri::generate_context!()).expect("error al iniciar DevVault");
 }

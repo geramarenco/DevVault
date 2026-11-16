@@ -4,3 +4,4 @@ src-tauri/target/
 data/
 backups/
 *.dvault
+src-tauri/gdrive-client.json

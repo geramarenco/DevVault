@@ -4,14 +4,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { Credential, Vault, VaultField } from "./types";
+import type { CloudBackupSettings, Credential, Vault, VaultField } from "./types";
 import { emptyVault } from "./types";
 import { translate, type Language } from "./i18n";
 import "./styles.css";
 
 const uid = () => crypto.randomUUID();
 const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const blankCredential = (): Credential => ({ id: uid(), name: "", project: localStorage.getItem("devvault-last-project") ?? "", environment: localStorage.getItem("devvault-last-environment") ?? "Development", service: "", tags: [], fields: [], updatedAt: new Date().toISOString() });
+type DriveStatus = { configured: boolean; connected: boolean; account: string | null };
+type DriveFile = { id: string; name: string; size?: string; createdTime?: string };
+const defaultCloud: CloudBackupSettings = { mode: "manual", keep: 10 };
+const pad = (n: number) => String(n).padStart(2, "0");
+const backupName = (d = new Date()) => `backup_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.dvault`;
+const LAST_CLOUD = "devvault-gdrive-last";
+const lastCloudAt = () => { try { return Number(localStorage.getItem(LAST_CLOUD)) || 0; } catch { return 0; } };
+const blankCredential =(): Credential => ({ id: uid(), name: "", project: localStorage.getItem("devvault-last-project") ?? "", environment: localStorage.getItem("devvault-last-environment") ?? "Development", service: "", tags: [], fields: [], updatedAt: new Date().toISOString() });
 
 function App() {
   const [language, setLanguage] = useState<Language>(() => (localStorage.getItem("devvault-language") as Language) || "es");
@@ -19,6 +26,7 @@ function App() {
   const [vault, setVault] = useState<Vault | null>(null), [path, setPath] = useState<string | null>(null), [password, setPassword] = useState(""), [isNew, setIsNew] = useState(false);
   const [query, setQuery] = useState(""), [selected, setSelected] = useState<string | null>(null), [editing, setEditing] = useState<Credential | null>(null), [revealed, setRevealed] = useState<Set<string>>(new Set()), [notice, setNotice] = useState(""), [settingsOpen, setSettingsOpen] = useState(false), [project, setProject] = useState<string | null>(null), [copied, setCopied] = useState<string | null>(null);
   const timer = useRef<number>();
+  const [drive, setDrive] = useState<DriveStatus | null>(null), [driveFiles, setDriveFiles] = useState<DriveFile[] | null>(null), [driveBusy, setDriveBusy] = useState(false);
   useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(""), 4000); return () => window.clearTimeout(id); }, [notice]);
   // Master password kept only in memory while the vault is unlocked; cleared on lock.
   const masterKey = useRef<string>("");
@@ -36,14 +44,27 @@ function App() {
   const unlocked = (v: Vault, file: string) => { masterKey.current = password; localStorage.setItem("devvault-last-file", file); setVault(v); setPath(file); setPassword(""); setConfirmPassword(""); setIsNew(false); };
   const openVault = async () => { if (!vaultFile || !password) return; setBusy(true); try { const encrypted = await readTextFile(vaultFile); unlocked(JSON.parse(await invoke<string>("decrypt_vault", { encrypted, password })) as Vault, vaultFile); setNotice("Bóveda desbloqueada."); } catch { setNotice("No se pudo abrir: contraseña incorrecta o archivo inválido."); } finally { setBusy(false); } };
   const createVault = async () => { if (!vaultFile) return; if (password.length < 10) return setNotice("Usa una contraseña maestra de al menos 10 caracteres."); if (password !== confirmPassword) return setNotice("Las contraseñas no coinciden."); setBusy(true); try { const v = emptyVault(); await writeTextFile(vaultFile, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(v), password })); unlocked(v, vaultFile); setNotice("Bóveda creada y cifrada."); } catch { setNotice("No se pudo crear la bóveda en esa ubicación."); } finally { setBusy(false); } };
-  const persist = async (next: Vault) => { if (!path || !masterKey.current) return setNotice("Cambios no guardados: la bóveda está bloqueada."); try { await writeTextFile(path, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(next), password: masterKey.current })); setVault(next); setNotice("Cambios guardados y cifrados."); } catch { setNotice("No se pudieron guardar los cambios."); } };
+  const persist = async (next: Vault) => { if (!path || !masterKey.current) return setNotice("Cambios no guardados: la bóveda está bloqueada."); try { await writeTextFile(path, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(next), password: masterKey.current })); setVault(next); setNotice("Cambios guardados y cifrados."); autoCloud(next, true); } catch { setNotice("No se pudieron guardar los cambios."); } };
   const matches = useMemo(() => !vault ? [] : (() => { const terms = norm(query).split(/\s+/).filter(Boolean); return vault.credentials.filter(c => { const hay = norm([c.name,c.project,c.environment,c.service,...c.tags,...c.fields.flatMap(f=>[f.name,f.value])].join("\n")); return terms.every(term => hay.includes(term)); }); })(), [vault, query]);
   const active = vault?.credentials.find(c => c.id === selected) ?? (project ? matches.filter(c => c.project.trim() === project) : matches)[0];
   const copy = async (value: string, id?: string) => { await writeText(value); if (id) { setCopied(id); window.setTimeout(() => setCopied(c => c === id ? null : c), 1600); } setNotice("Campo copiado. Se limpiará en 30 segundos si no cambias el portapapeles."); window.setTimeout(() => invoke("clear_clipboard_if_matches", { value }).catch(() => {}), 30_000); };
   const saveCredential = () => { if (!editing || !vault) return; const item = { ...editing, updatedAt: new Date().toISOString() }; if (item.project.trim()) localStorage.setItem("devvault-last-project", item.project.trim()); if (item.environment.trim()) localStorage.setItem("devvault-last-environment", item.environment.trim()); persist({ ...vault, credentials: vault.credentials.some(c=>c.id===item.id) ? vault.credentials.map(c=>c.id===item.id ? item : c) : [...vault.credentials, item] }); setSelected(item.id); setEditing(null); };
   const remove = async () => { if (!active || !vault) return; if (!(await confirmDialog(`${t("¿Eliminar")} “${active.name}”? ${t("Esta acción no se puede deshacer.")}`, { title: t("Eliminar credencial"), kind: "warning", okLabel: t("Eliminar"), cancelLabel: t("Cancelar") }))) return; persist({ ...vault, credentials: vault.credentials.filter(c=>c.id!==active.id) }); setSelected(null); };
   const backup = async () => { if (!path) return; const target = await save({ defaultPath: "vault-backup.dvault", filters: [{ name: "Bóveda cifrada", extensions: ["dvault"] }] }); if (!target) return; await writeTextFile(target, await readTextFile(path)); setNotice("Backup cifrado exportado."); };
-  const restore = async () => { const source = await open({ filters: [{ name: "Bóveda cifrada", extensions: ["dvault"] }], multiple: false }); if (typeof source !== "string" || !path) return; const secret = await passwordDialog(t("Introduce la contraseña del backup para validar su integridad:"), { title: t("Importar backup"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del backup") }); if (!secret) return; try { const content = await readTextFile(source); JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret })); if (!(await confirmDialog(t("El backup es válido. ¿Reemplazar la bóveda actual?"), { title: t("Importar backup"), kind: "warning", okLabel: t("Reemplazar"), cancelLabel: t("Cancelar") }))) return; await writeTextFile(path, content); masterKey.current = secret; setVault(JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret }))); setNotice("Backup restaurado correctamente."); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
+  const cloud = vault?.settings.cloudBackup ?? defaultCloud;
+  const refreshDrive = async () => { const st = await invoke<DriveStatus>("gdrive_status"); setDrive(st); if (st.connected) { try { setDriveFiles(await invoke<DriveFile[]>("gdrive_list_backups")); } catch { setDriveFiles(null); } } else setDriveFiles(null); return st; };
+  const uploadCloud = async (keep: number, silent = false) => { if (!path) return; setDriveBusy(true); try { await invoke("gdrive_upload_backup", { name: backupName(), content: await readTextFile(path), keep }); try { localStorage.setItem(LAST_CLOUD, String(Date.now())); } catch {} setDriveFiles(await invoke<DriveFile[]>("gdrive_list_backups")); if (!silent) setNotice("Backup subido a Google Drive."); } catch (e) { console.error(e); setNotice("No se pudo subir el backup a Google Drive."); } finally { setDriveBusy(false); } };
+  // Automatic uploads: "daily" at most once per 24 h, "onSave" at most once per hour so rotation keeps useful history.
+  const autoCloud = (v: Vault, afterSave: boolean) => { const c = v.settings.cloudBackup ?? defaultCloud; if (!drive?.connected || c.mode === "manual" || (c.mode === "onSave" && !afterSave)) return; const gap = c.mode === "daily" ? 86_400_000 : 3_600_000; if (Date.now() - lastCloudAt() >= gap) uploadCloud(c.keep, true); };
+  useEffect(() => { if (!path) { setDrive(null); setDriveFiles(null); return; } refreshDrive().catch(() => setDrive(null)); }, [path]);
+  useEffect(() => { if (vault && drive?.connected) autoCloud(vault, false); }, [drive?.connected]);
+  const [driveConnecting, setDriveConnecting] = useState(false);
+  const connectDrive = async () => { setDriveBusy(true); setDriveConnecting(true); setNotice("Completa la autorización en el navegador…"); try { await invoke("gdrive_connect"); await refreshDrive(); setNotice("Google Drive conectado."); } catch (e) { console.error(e); const msg = String(e); setNotice(msg.includes("cancelada") ? "Conexión con Google Drive cancelada." : msg.includes("Tiempo de espera") ? "No se recibió respuesta de Google a tiempo. Vuelve a intentarlo." : "No se pudo conectar con Google Drive."); } finally { setDriveBusy(false); setDriveConnecting(false); } };
+  const cancelConnect = () => invoke("gdrive_cancel_connect").catch(() => {});
+  const disconnectDrive = async () => { if (!(await confirmDialog(t("Los backups ya subidos seguirán en tu Google Drive. ¿Desconectar la cuenta de este equipo?"), { title: t("Desconectar Google Drive"), okLabel: t("Desconectar"), cancelLabel: t("Cancelar") }))) return; await invoke("gdrive_disconnect"); await refreshDrive(); setNotice("Google Drive desconectado."); };
+  const restoreContent = async (content: string) => { if (!path) return; const secret = await passwordDialog(t("Introduce la contraseña del backup para validar su integridad:"), { title: t("Importar backup"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del backup") }); if (!secret) return; try { const restored = JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret })); if (!(await confirmDialog(t("El backup es válido. ¿Reemplazar la bóveda actual?"), { title: t("Importar backup"), kind: "warning", okLabel: t("Reemplazar"), cancelLabel: t("Cancelar") }))) return; await writeTextFile(path, content); masterKey.current = secret; setVault(restored); setNotice("Backup restaurado correctamente."); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
+  const restoreFromDrive = async (file: DriveFile) => { setDriveBusy(true); let content: string; try { content = await invoke<string>("gdrive_download_backup", { id: file.id }); } catch { setDriveBusy(false); return setNotice("No se pudo descargar el backup de Google Drive."); } setDriveBusy(false); await restoreContent(content); };
+  const restore = async () => { const source = await open({ filters: [{ name: "Bóveda cifrada", extensions: ["dvault"] }], multiple: false }); if (typeof source !== "string" || !path) return; try { await restoreContent(await readTextFile(source)); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
   const languagePicker = <select className="language" aria-label="Language" value={language} onChange={e=>{const next=e.target.value as Language; setLanguage(next); localStorage.setItem("devvault-language",next); document.documentElement.lang=next;}}><option value="es">Español</option><option value="en">English</option></select>;
   if (!vault) {
     const fileName = vaultFile?.split(/[\\/]/).pop() ?? "";
@@ -126,6 +147,7 @@ function App() {
         <article className="setting-row"><div><strong>{t("Idioma")}</strong><p>{t("Elige el idioma de la interfaz.")}</p></div>{languagePicker}</article>
         <article className="setting-row"><div><strong>{t("Bloqueo automático")}</strong><p>{t("Tras este tiempo sin actividad, la bóveda se bloquea.")}</p></div><select className="language" aria-label={t("Bloqueo automático")} value={vault.settings.autoLockMinutes} onChange={e=>persist({...vault, settings:{...vault.settings, autoLockMinutes:Number(e.target.value)}})}>{[1,5,10,15,30,60].map(m=><option key={m} value={m}>{m} min</option>)}</select></article>
         <article className="setting-row"><div><strong>{t("Archivo de la bóveda")}</strong><p className="mono" title={path ?? ""}>{path}</p></div></article>
+        <CloudSection language={language} status={drive} files={driveFiles} busy={driveBusy} connecting={driveConnecting} onCancelConnect={cancelConnect} settings={cloud} onConnect={connectDrive} onDisconnect={disconnectDrive} onUpload={()=>uploadCloud(cloud.keep)} onRestore={restoreFromDrive} onSettings={c=>persist({...vault, settings:{...vault.settings, cloudBackup:c}})}/>
         <ChangePassword language={language} onChange={async (current, next) => { if (!path || !vault || current !== masterKey.current) return false; const tmp = path + ".tmp"; await writeTextFile(tmp, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(vault), password: next })); await rename(tmp, path); masterKey.current = next; setNotice("Contraseña maestra actualizada."); return true; }}/>
       </section>
       : current ? <article className="sheet" key={current.id}>
@@ -179,6 +201,32 @@ function ConfirmDialog({ title, message, okLabel, cancelLabel, kind, password, p
       </footer>
     </div>
   </div>;
+}
+function CloudSection({ language, status, files, busy, connecting, onCancelConnect, settings, onConnect, onDisconnect, onUpload, onRestore, onSettings }: { language: Language; status: DriveStatus | null; files: DriveFile[] | null; busy: boolean; connecting: boolean; onCancelConnect: () => void; settings: CloudBackupSettings; onConnect: () => void; onDisconnect: () => void; onUpload: () => void; onRestore: (f: DriveFile) => void; onSettings: (c: CloudBackupSettings) => void }) {
+  const t = (s: string) => translate(language, s);
+  const when = (f: DriveFile) => { const m = f.name.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/); const d = m ? new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]) : f.createdTime ? new Date(f.createdTime) : null; return d ? d.toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }) : f.name; };
+  const kb = (f: DriveFile) => f.size ? `${Math.max(1, Math.round(Number(f.size) / 1024))} KB` : "";
+  if (!status) return null;
+  return <section className="setting-block cloud">
+    <div><strong>{t("Copia en Google Drive")}</strong><p>{t("Sube copias cifradas de la bóveda a tu Google Drive. Google solo ve un archivo cifrado; sin tu contraseña maestra no puede leerse.")}</p></div>
+    {!status.configured ? <p className="hint">{t("Esta compilación no incluye credenciales de Google Drive.")}</p>
+    : !status.connected ? <div className="cloud-account">{connecting
+        ? <><span>{t("Esperando autorización en el navegador…")}</span><button className="ghost" onClick={onCancelConnect}>{t("Cancelar")}</button></>
+        : <button className="primary" disabled={busy} onClick={onConnect}>{t("Conectar Google Drive")}</button>}</div>
+    : <>
+      <div className="cloud-account"><span>{t("Conectado como")} <b>{status.account ?? "Google"}</b></span><button className="ghost" disabled={busy} onClick={onDisconnect}>{t("Desconectar")}</button></div>
+      <div className="cloud-opts">
+        <label>{t("Copia automática")}<select value={settings.mode} onChange={e=>onSettings({ ...settings, mode: e.target.value as CloudBackupSettings["mode"] })}><option value="manual">{t("Solo manual")}</option><option value="daily">{t("Una vez al día")}</option><option value="onSave">{t("Al guardar (máx. 1 por hora)")}</option></select></label>
+        <label>{t("Versiones a conservar")}<select value={settings.keep} onChange={e=>onSettings({ ...settings, keep: Number(e.target.value) })}>{[3,5,10,20,30].map(n=><option key={n} value={n}>{n}</option>)}</select></label>
+        <button className="primary" disabled={busy} onClick={onUpload}>{busy ? t("Procesando…") : t("Subir ahora")}</button>
+      </div>
+      <div className="cloud-list">
+        <h3>{t("Backups en Drive")}</h3>
+        {files === null ? <p className="hint">{t("No se pudo cargar la lista.")}</p> : !files.length ? <p className="hint">{t("Aún no hay backups en Drive.")}</p>
+        : <ul>{files.map(f=><li key={f.id}><span><b>{when(f)}</b><small>{f.name} {kb(f)}</small></span><button className="ghost" disabled={busy} onClick={()=>onRestore(f)}>{t("Restaurar")}</button></li>)}</ul>}
+      </div>
+    </>}
+  </section>;
 }
 function ChangePassword({ language, onChange }: { language: Language; onChange: (current: string, next: string) => Promise<boolean> }) {
   const t = (s: string) => translate(language, s);

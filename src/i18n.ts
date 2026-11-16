@@ -1,6 +1,13 @@
 export type Language = "es" | "en";
 
 const en: Record<string, string> = {
+  "Copia en Google Drive": "Google Drive backup", "Sube copias cifradas de la bóveda a tu Google Drive. Google solo ve un archivo cifrado; sin tu contraseña maestra no puede leerse.": "Upload encrypted copies of the vault to your Google Drive. Google only sees an encrypted file; it can't be read without your master password.",
+  "Esta compilación no incluye credenciales de Google Drive.": "This build doesn't include Google Drive credentials.", "Conectar Google Drive": "Connect Google Drive", "Esperando autorización en el navegador…": "Waiting for authorization in the browser…", "Conexión con Google Drive cancelada.": "Google Drive connection cancelled.", "No se recibió respuesta de Google a tiempo. Vuelve a intentarlo.": "Google didn't respond in time. Please try again.", "Conectado como": "Connected as", "Desconectar": "Disconnect", "Desconectar Google Drive": "Disconnect Google Drive",
+  "Los backups ya subidos seguirán en tu Google Drive. ¿Desconectar la cuenta de este equipo?": "Backups already uploaded stay in your Google Drive. Disconnect the account from this computer?",
+  "Copia automática": "Automatic backup", "Solo manual": "Manual only", "Una vez al día": "Once a day", "Al guardar (máx. 1 por hora)": "On save (max. once an hour)", "Versiones a conservar": "Versions to keep", "Subir ahora": "Upload now",
+  "Backups en Drive": "Backups in Drive", "No se pudo cargar la lista.": "Could not load the list.", "Aún no hay backups en Drive.": "No backups in Drive yet.", "Restaurar": "Restore",
+  "Backup subido a Google Drive.": "Backup uploaded to Google Drive.", "No se pudo subir el backup a Google Drive.": "Could not upload the backup to Google Drive.", "Completa la autorización en el navegador…": "Complete the authorization in your browser…",
+  "Google Drive conectado.": "Google Drive connected.", "No se pudo conectar con Google Drive.": "Could not connect to Google Drive.", "Google Drive desconectado.": "Google Drive disconnected.", "No se pudo descargar el backup de Google Drive.": "Could not download the backup from Google Drive.",
   "Validar": "Validate", "Contraseña del backup": "Backup password",
   "Vuelve a cifrar la bóveda con una contraseña nueva. Los backups exportados antes conservan la contraseña anterior.": "Re-encrypts the vault with a new password. Backups exported earlier keep the old password.",
   "Contraseña actual": "Current password", "Nueva contraseña": "New password", "Cambiar contraseña": "Change password",

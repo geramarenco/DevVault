@@ -35,6 +35,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVVAULT_GDRIVE_CLIENT_ID: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_ID }}
+          DEVVAULT_GDRIVE_CLIENT_SECRET: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: DevVault ${{ github.ref_name }}
