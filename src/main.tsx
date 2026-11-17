@@ -8,6 +8,7 @@ import type { CloudBackupSettings, Credential, Vault, VaultField } from "./types
 import { emptyVault } from "./types";
 import { translate, type Language } from "./i18n";
 import "./styles.css";
+import logo from "./assets/logo.png";
 
 const uid = () => crypto.randomUUID();
 const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -20,7 +21,21 @@ const LAST_CLOUD = "devvault-gdrive-last";
 const lastCloudAt = () => { try { return Number(localStorage.getItem(LAST_CLOUD)) || 0; } catch { return 0; } };
 const blankCredential =(): Credential => ({ id: uid(), name: "", project: localStorage.getItem("devvault-last-project") ?? "", environment: localStorage.getItem("devvault-last-environment") ?? "Development", service: "", tags: [], fields: [], updatedAt: new Date().toISOString() });
 
+const WIDTHS_KEY = "devvault-column-widths";
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+const loadWidths = () => { try { const w = JSON.parse(localStorage.getItem(WIDTHS_KEY) ?? ""); if (typeof w?.side === "number" && typeof w?.list === "number") return { side: w.side as number, list: w.list as number }; } catch {} return { side: 232, list: 320 }; };
+function Resizer({ onDrag }: { onDrag: (dx: number) => void }) {
+  const down = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault(); let x = e.clientX; const el = e.currentTarget; el.setPointerCapture(e.pointerId); document.body.classList.add("resizing");
+    const move = (ev: PointerEvent) => { const dx = ev.clientX - x; x = ev.clientX; if (dx) onDrag(dx); };
+    const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); document.body.classList.remove("resizing"); };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+  };
+  return <div className="col-resizer" role="separator" aria-orientation="vertical" onPointerDown={down}/>;
+}
 function App() {
+  const [widths, setWidths] = useState(loadWidths);
+  useEffect(() => { try { localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths)); } catch {} }, [widths]);
   const [language, setLanguage] = useState<Language>(() => (localStorage.getItem("devvault-language") as Language) || "es");
   const t = (text: string) => translate(language, text);
   const [vault, setVault] = useState<Vault | null>(null), [path, setPath] = useState<string | null>(null), [password, setPassword] = useState(""), [isNew, setIsNew] = useState(false);
@@ -32,7 +47,9 @@ function App() {
   const masterKey = useRef<string>("");
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const confirmDialog = (message: string, opts: { title: string; okLabel: string; cancelLabel: string; kind?: string }) => new Promise<boolean>(resolve => setDialog({ message, ...opts, resolve: v => resolve(v !== null) }));
-  const passwordDialog = (message: string, opts: { title: string; okLabel: string; cancelLabel: string; placeholder: string }) => new Promise<string | null>(resolve => setDialog({ message, ...opts, password: true, resolve }));
+  const passwordDialog = (message: string, opts: { title: string; okLabel: string; cancelLabel: string; placeholder: string; confirm?: boolean; confirmPlaceholder?: string; hints?: { short: string; mismatch: string } }) => new Promise<string | null>(resolve => setDialog({ message, ...opts, password: true, resolve }));
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const openMenu = (items: MenuItem[]) => (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, items }); };
   const [vaultFile, setVaultFile] = useState<string | null>(() => localStorage.getItem("devvault-last-file")), [confirmPassword, setConfirmPassword] = useState(""), [busy, setBusy] = useState(false);
   const resetLock = () => { if (!vault) return; window.clearTimeout(timer.current); timer.current = window.setTimeout(lock, vault.settings.autoLockMinutes * 60_000); };
   useEffect(() => { const activity = () => resetLock(); window.addEventListener("pointerdown", activity); window.addEventListener("keydown", activity); return () => { window.removeEventListener("pointerdown", activity); window.removeEventListener("keydown", activity); window.clearTimeout(timer.current); }; });
@@ -62,9 +79,48 @@ function App() {
   const connectDrive = async () => { setDriveBusy(true); setDriveConnecting(true); setNotice("Completa la autorización en el navegador…"); try { await invoke("gdrive_connect"); await refreshDrive(); setNotice("Google Drive conectado."); } catch (e) { console.error(e); const msg = String(e); setNotice(msg.includes("cancelada") ? "Conexión con Google Drive cancelada." : msg.includes("Tiempo de espera") ? "No se recibió respuesta de Google a tiempo. Vuelve a intentarlo." : "No se pudo conectar con Google Drive."); } finally { setDriveBusy(false); setDriveConnecting(false); } };
   const cancelConnect = () => invoke("gdrive_cancel_connect").catch(() => {});
   const disconnectDrive = async () => { if (!(await confirmDialog(t("Los backups ya subidos seguirán en tu Google Drive. ¿Desconectar la cuenta de este equipo?"), { title: t("Desconectar Google Drive"), okLabel: t("Desconectar"), cancelLabel: t("Cancelar") }))) return; await invoke("gdrive_disconnect"); await refreshDrive(); setNotice("Google Drive desconectado."); };
-  const restoreContent = async (content: string) => { if (!path) return; const secret = await passwordDialog(t("Introduce la contraseña del backup para validar su integridad:"), { title: t("Importar backup"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del backup") }); if (!secret) return; try { const restored = JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret })); if (!(await confirmDialog(t("El backup es válido. ¿Reemplazar la bóveda actual?"), { title: t("Importar backup"), kind: "warning", okLabel: t("Reemplazar"), cancelLabel: t("Cancelar") }))) return; await writeTextFile(path, content); masterKey.current = secret; setVault(restored); setNotice("Backup restaurado correctamente."); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
+  const restoreContent = async (content: string) => { if (!path) return; const secret = await passwordDialog(t("Introduce la contraseña del backup para validar su integridad:"), { title: t("Importar backup"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del backup") }); if (!secret) return; try { const restored = JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret })); if (restored?.kind === SHARE_KIND || !Array.isArray(restored?.credentials)) return setNotice("El backup no es válido o la contraseña es incorrecta."); if (!(await confirmDialog(t("El backup es válido. ¿Reemplazar la bóveda actual?"), { title: t("Importar backup"), kind: "warning", okLabel: t("Reemplazar"), cancelLabel: t("Cancelar") }))) return; await writeTextFile(path, content); masterKey.current = secret; setVault(restored); setNotice("Backup restaurado correctamente."); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
   const restoreFromDrive = async (file: DriveFile) => { setDriveBusy(true); let content: string; try { content = await invoke<string>("gdrive_download_backup", { id: file.id }); } catch { setDriveBusy(false); return setNotice("No se pudo descargar el backup de Google Drive."); } setDriveBusy(false); await restoreContent(content); };
   const restore = async () => { const source = await open({ filters: [{ name: "Bóveda cifrada", extensions: ["dvault"] }], multiple: false }); if (typeof source !== "string" || !path) return; try { await restoreContent(await readTextFile(source)); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
+  // Shared exports: credentials only (no settings), encrypted with a one-off password chosen by the user, never the master one.
+  const exportShare = async (creds: Credential[], label: string, plain = false) => {
+    if (!creds.length) return;
+    if (plain) {
+      if (!(await confirmDialog(`${t("El archivo no estará cifrado: cualquiera que lo abra podrá leer los secretos. Úsalo solo en un canal seguro y bórralo después.")} (${creds.length} ${creds.length===1 ? t("credencial") : t("credenciales")})`, { title: t("Exportar sin contraseña"), kind: "warning", okLabel: t("Exportar"), cancelLabel: t("Cancelar") }))) return;
+      const target = await save({ defaultPath: `${label.replace(/[^\w.-]+/g, "_").slice(0, 40) || "devvault"}.dvshare.json`, filters: plainShareFilters });
+      if (!target) return;
+      try { await writeTextFile(target, JSON.stringify({ kind: SHARE_KIND, version: 1, exportedAt: new Date().toISOString(), credentials: creds }, null, 2)); setNotice("Credenciales exportadas sin cifrar."); } catch { setNotice("No se pudo exportar."); }
+      return;
+    }
+    const secret = await passwordDialog(`${t("Elige una contraseña para este archivo. Compártela con el destinatario por otro canal; tu contraseña maestra no se incluye.")} (${creds.length} ${creds.length===1 ? t("credencial") : t("credenciales")})`, { title: t("Exportar credenciales"), okLabel: t("Exportar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del archivo"), confirm: true, confirmPlaceholder: t("Repite la contraseña"), hints: { short: t("Mínimo 10 caracteres."), mismatch: t("Las contraseñas no coinciden.") } });
+    if (!secret) return;
+    const slug = label.replace(/[^\w.-]+/g, "_").slice(0, 40) || "devvault";
+    const target = await save({ defaultPath: `${slug}.dvshare`, filters: shareFilters });
+    if (!target) return;
+    try { const payload = { kind: SHARE_KIND, version: 1, exportedAt: new Date().toISOString(), credentials: creds }; await writeTextFile(target, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(payload), password: secret })); setNotice("Credenciales exportadas."); }
+    catch { setNotice("No se pudo exportar."); }
+  };
+  const importShare = async () => {
+    if (!vault) return;
+    const source = await open({ filters: [{ name: "DevVault compartido", extensions: ["dvshare", "json"] }], multiple: false });
+    if (typeof source !== "string") return;
+    let creds: Credential[], raw: string;
+    try { raw = await readTextFile(source); } catch { return setNotice("No se pudo importar: contraseña incorrecta o archivo inválido."); }
+    let data: any = null; try { data = JSON.parse(raw); } catch {}
+    if (data?.kind === SHARE_KIND && Array.isArray(data.credentials)) creds = data.credentials; // unencrypted export
+    else {
+      const secret = await passwordDialog(t("Introduce la contraseña del archivo compartido:"), { title: t("Importar credenciales"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del archivo") });
+      if (!secret) return;
+      try { const d = JSON.parse(await invoke<string>("decrypt_vault", { encrypted: raw, password: secret })); if (d?.kind !== SHARE_KIND || !Array.isArray(d.credentials)) throw 0; creds = d.credentials; }
+      catch { return setNotice("No se pudo importar: contraseña incorrecta o archivo inválido."); }
+    }
+    if (!creds.every(c => c && typeof c.id === "string" && Array.isArray(c.fields))) return setNotice("No se pudo importar: contraseña incorrecta o archivo inválido.");
+    const ids = new Set(vault.credentials.map(c => c.id)), dup = creds.filter(c => ids.has(c.id)).length;
+    if (!(await confirmDialog(`${creds.length} ${creds.length===1 ? t("credencial") : t("credenciales")}.${dup ? ` ${dup} ${t("ya existen y se reemplazarán.")}` : ""}`, { title: t("Importar credenciales"), kind: dup ? "warning" : undefined, okLabel: t("Importar"), cancelLabel: t("Cancelar") }))) return;
+    const byId = new Map(creds.map(c => [c.id, c]));
+    await persist({ ...vault, credentials: [...vault.credentials.map(c => byId.get(c.id) ?? c), ...creds.filter(c => !ids.has(c.id))] });
+    setNotice("Credenciales importadas.");
+  };
   const languagePicker = <select className="language" aria-label="Language" value={language} onChange={e=>{const next=e.target.value as Language; setLanguage(next); localStorage.setItem("devvault-language",next); document.documentElement.lang=next;}}><option value="es">Español</option><option value="en">English</option></select>;
   if (!vault) {
     const fileName = vaultFile?.split(/[\\/]/).pop() ?? "";
@@ -73,7 +129,7 @@ function App() {
     const hint = !isNew ? null : password.length < 10 ? { tone: "", text: "Mínimo 10 caracteres." } : !confirmPassword ? { tone: "", text: "Repítela para confirmar." } : password !== confirmPassword ? { tone: "bad", text: "Las contraseñas no coinciden." } : { tone: "good", text: "Las contraseñas coinciden." };
     const failed = notice.startsWith("No se") || notice.startsWith("Usa ") || notice.startsWith("Las contraseñas");
     return <main className="gate"><section>
-      <header className="gate-head"><div className="mark">DV</div><div><h1>DevVault</h1><p>{t("Tu bóveda local para secretos de desarrollo.")}</p></div></header>
+      <header className="gate-head"><img className="gate-logo" src={logo} alt="" width={56} height={56}/><div><h1>DevVault</h1><p>{t("Tu bóveda local para secretos de desarrollo.")}</p></div></header>
       <div className="mode" role="tablist" aria-label={t("Modo")}><button type="button" role="tab" aria-selected={!isNew} onClick={()=>switchMode(false)}>{t("Abrir bóveda")}</button><button type="button" role="tab" aria-selected={isNew} onClick={()=>switchMode(true)}>{t("Crear bóveda")}</button></div>
       <form onSubmit={e=>{e.preventDefault(); if (ready && !busy) (isNew ? createVault() : openVault());}}>
         <ol className="steps">
@@ -110,29 +166,27 @@ function App() {
   const visible = project ? matches.filter(c=>c.project.trim()===project) : matches;
   const current = visible.find(c=>c.id===selected) ?? visible[0];
   const pick = (fn: () => void) => () => { setSettingsOpen(false); fn(); };
-  return <main className="app">
+  return <main className="app" style={{ ["--side" as string]: widths.side + "px", ["--list" as string]: widths.list + "px" } as React.CSSProperties}>
     <aside>
-      <div className="brand"><span className="mark">DV</span><div><span>DevVault</span><small title={path ?? ""}>{path?.split(/[\\/]/).pop()}</small></div></div>
-      <button className="new" onClick={pick(()=>setEditing(blankCredential()))}><Icon d="M12 5v14M5 12h14"/><span>{t("Nueva credencial")}</span><kbd>Ctrl N</kbd></button>
+      <button className="new" title={path ?? ""} onClick={pick(()=>setEditing(blankCredential()))}><Icon d="M12 5v14M5 12h14"/><span>{t("Nueva")}</span><kbd>Ctrl N</kbd></button>
       <nav aria-label={t("Colecciones")}>
-        <button className={!project && !settingsOpen ? "nav-active" : ""} onClick={pick(()=>setProject(null))}><Icon d="M4 6h16M4 12h16M4 18h16"/><span>{t("Todas")}</span><b>{vault.credentials.length}</b></button>
+        <button className={!project && !settingsOpen ? "nav-active" : ""} onClick={pick(()=>setProject(null))} onContextMenu={openMenu([{ label: t("Exportar todo…"), run: () => exportShare(vault.credentials, "devvault") }, { label: t("Exportar todo sin contraseña…"), run: () => exportShare(vault.credentials, "devvault", true) }, { label: t("Importar credenciales…"), run: importShare }, { sep: true }, { label: t("Exportar backup"), run: backup }, { label: t("Importar backup"), run: restore }])}><Icon d="M4 6h16M4 12h16M4 18h16"/><span>{t("Todas")}</span><b>{vault.credentials.length}</b></button>
         {projects.length > 0 && <h2>{t("Proyectos")}</h2>}
-        {projects.map(p=><button key={p} className={project===p && !settingsOpen ? "nav-active" : ""} onClick={pick(()=>{setProject(p); setSelected(null);})}><Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><span>{p}</span><b>{projectCount(p)}</b></button>)}
+        {projects.map(p=><button key={p} className={project===p && !settingsOpen ? "nav-active" : ""} onClick={pick(()=>{setProject(p); setSelected(null);})} onContextMenu={openMenu([{ label: t("Exportar proyecto…"), run: () => exportShare(vault.credentials.filter(c=>c.project.trim()===p), p) }, { label: t("Exportar proyecto sin contraseña…"), run: () => exportShare(vault.credentials.filter(c=>c.project.trim()===p), p, true) }, { label: t("Importar credenciales…"), run: importShare }])}><Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><span>{p}</span><b>{projectCount(p)}</b></button>)}
       </nav>
       <footer>
-        <button onClick={backup}><Icon d="M12 4v11M7 10l5 5 5-5M5 20h14"/><span>{t("Exportar backup")}</span></button>
-        <button onClick={restore}><Icon d="M12 20V9M7 14l5-5 5 5M5 4h14"/><span>{t("Importar backup")}</span></button>
         <button className={settingsOpen ? "nav-active" : ""} onClick={()=>setSettingsOpen(true)}><Icon d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6"/><span>{t("Configuración")}</span></button>
         <button className="lock" onClick={lock}><Icon d="M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4"/><span>{t("Bloquear")}</span><kbd>Ctrl L</kbd></button>
       </footer>
+      <Resizer onDrag={dx=>setWidths(w=>({...w, side: clamp(w.side+dx, 160, 420)}))}/>
     </aside>
     <section className="list">
       <header>
         <div className="search"><Icon d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM20 20l-4-4"/><input id="search" placeholder={t("Buscar en toda la bóveda…")} value={query} onKeyDown={e=>{if(e.key==="Escape"&&query){e.stopPropagation();setQuery("");}}} onChange={e=>{setSettingsOpen(false);setQuery(e.target.value)}}/>{query ? <button className="clear" title={t("Limpiar filtro")} aria-label={t("Limpiar filtro")} onClick={()=>{setQuery("");document.querySelector<HTMLInputElement>("#search")?.focus();}}><Icon d="M6 6l12 12M18 6 6 18"/></button> : <kbd>Ctrl K</kbd>}</div>
         <p className="list-meta"><span>{project ?? t("Todas")}</span><span>{visible.length} {visible.length===1 ? t("credencial") : t("credenciales")}</span></p>
       </header>
-      <div className="results">
-        {visible.map(c=><button className={current?.id===c.id && !settingsOpen ? "selected" : ""} key={c.id} onClick={pick(()=>setSelected(c.id))}>
+      <div className="results" onContextMenu={openMenu([{ label: t("Importar credenciales…"), run: importShare }])}>
+        {visible.map(c=><button className={current?.id===c.id && !settingsOpen ? "selected" : ""} key={c.id} onClick={pick(()=>setSelected(c.id))} onContextMenu={openMenu([{ label: t("Exportar credencial…"), run: () => exportShare([c], c.name) }, { label: t("Exportar credencial sin contraseña…"), run: () => exportShare([c], c.name, true) }, ...(c.project.trim() ? [{ label: t("Exportar proyecto…"), run: () => exportShare(vault.credentials.filter(x=>x.project.trim()===c.project.trim()), c.project.trim()) }] : []), { label: t("Importar credenciales…"), run: importShare }])}>
           <span className="row-top"><strong>{c.name || t("Sin nombre")}</strong><Env value={c.environment}/></span>
           <span className="row-sub">{[project ? null : (c.project || t("Sin proyecto")), c.service].filter(Boolean).join(" · ") || " "}</span>
           {c.tags.length > 0 && <span className="row-tags">{c.tags.map(tag=><i key={tag}>{tag}</i>)}</span>}
@@ -141,6 +195,7 @@ function App() {
           ? <div className="empty"><p>{t("Nada coincide con el filtro.")}</p><button className="ghost" onClick={()=>{setQuery("");setProject(null);}}>{t("Limpiar filtro")}</button></div>
           : <div className="empty"><p>{t("No hay credenciales todavía.")}</p></div>)}
       </div>
+      <Resizer onDrag={dx=>setWidths(w=>({...w, list: clamp(w.list+dx, 220, 640)}))}/>
     </section>
     <section className="detail">{settingsOpen ? <section className="settings">
         <header><h2>{t("Configuración")}</h2></header>
@@ -170,22 +225,47 @@ function App() {
         <footer className="stamp">{t("Actualizada")} {new Date(current.updatedAt).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" })}</footer>
       </article>
       : <div className="detail-empty">
-          <span className="mark big">DV</span>
+          <img className="empty-logo" src={logo} alt="" width={72} height={72}/>
           <h2>{vault.credentials.length ? t("Selecciona una credencial") : t("Tu bóveda está lista")}</h2>
           <p>{vault.credentials.length ? t("Elige una de la lista para ver sus campos.") : t("Guarda tu primera API key, token o cadena de conexión. Todo se cifra en este equipo.")}</p>
           {!vault.credentials.length && <button className="primary" onClick={()=>setEditing(blankCredential())}><Icon d="M12 5v14M5 12h14"/>{t("Nueva credencial")}</button>}
           <dl className="shortcuts"><div><dt><kbd>Ctrl K</kbd></dt><dd>{t("Buscar")}</dd></div><div><dt><kbd>Ctrl N</kbd></dt><dd>{t("Nueva")}</dd></div><div><dt><kbd>Ctrl L</kbd></dt><dd>{t("Bloquear")}</dd></div></dl>
         </div>}
     </section>
+    {menu && <ContextMenu {...menu} onClose={()=>setMenu(null)}/>}
     {dialog && <ConfirmDialog {...dialog} onClose={v=>{dialog.resolve(v); setDialog(null);}}/>}
     {editing && <Editor credential={editing} isNew={!vault.credentials.some(c=>c.id===editing.id)} projects={projects} environments={distinct(vault.credentials.map(c=>c.environment))} setCredential={setEditing} onSave={saveCredential} onClose={()=>setEditing(null)} language={language}/>}
     {notice && <output className={"toast" + (/^(No se|El backup no|Cambios no)/.test(notice) ? " bad" : "")} role="status">{t(notice)}</output>}
   </main>;
 }
-type DialogState = { title: string; message: string; okLabel: string; cancelLabel: string; kind?: string; password?: boolean; placeholder?: string; resolve: (value: string | null) => void };
-function ConfirmDialog({ title, message, okLabel, cancelLabel, kind, password, placeholder, onClose: close }: Omit<DialogState, "resolve"> & { onClose: (value: string | null) => void }) {
+type MenuItem = { label: string; run: () => void; sep?: undefined } | { sep: true; label?: undefined; run?: undefined };
+const SHARE_KIND = "devvault-share";
+const plainShareFilters = [{ name: "DevVault sin cifrar", extensions: ["json"] }];
+const shareFilters = [{ name: "DevVault compartido", extensions: ["dvshare"] }];
+function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useEffect(() => {
+    const el = ref.current;
+    if (el) { const r = el.getBoundingClientRect(); setPos({ left: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)), top: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) }); el.querySelector<HTMLButtonElement>("button")?.focus(); }
+    const close = () => onClose(); window.addEventListener("blur", close); window.addEventListener("resize", close);
+    return () => { window.removeEventListener("blur", close); window.removeEventListener("resize", close); };
+  }, []);
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const b = [...ref.current!.querySelectorAll<HTMLButtonElement>("button")]; const i = b.indexOf(document.activeElement as HTMLButtonElement); b[(i + (e.key === "ArrowDown" ? 1 : -1) + b.length) % b.length]?.focus(); }
+  };
+  return <div className="menu-layer" onMouseDown={onClose} onContextMenu={e => { e.preventDefault(); onClose(); }}>
+    <div ref={ref} className="ctx-menu" role="menu" style={pos} onMouseDown={e => e.stopPropagation()} onKeyDown={keys}>
+      {items.map((it, i) => it.sep ? <hr key={i}/> : <button key={i} role="menuitem" onClick={() => { onClose(); it.run(); }}>{it.label}</button>)}
+    </div>
+  </div>;
+}
+type DialogState = { title: string; message: string; okLabel: string; cancelLabel: string; kind?: string; password?: boolean; placeholder?: string; confirm?: boolean; confirmPlaceholder?: string; hints?: { short: string; mismatch: string }; resolve: (value: string | null) => void };
+function ConfirmDialog({ title, message, okLabel, cancelLabel, kind, password, placeholder, confirm, confirmPlaceholder, hints, onClose: close }: Omit<DialogState, "resolve"> & { onClose: (value: string | null) => void }) {
   const cancelRef = useRef<HTMLButtonElement>(null), inputRef = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(""), [again, setAgain] = useState("");
+  const valid = !password || (confirm ? value.length >= 10 && value === again : !!value);
   const onClose = (ok: boolean) => close(ok ? value : null);
   useEffect(() => { (password ? inputRef.current : cancelRef.current)?.focus(); }, []);
   const danger = kind === "warning";
@@ -194,10 +274,10 @@ function ConfirmDialog({ title, message, okLabel, cancelLabel, kind, password, p
       <span className={"confirm-ico" + (danger ? " danger" : "")} aria-hidden="true">{danger ? <Icon d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/> : <Icon d="M12 16v-4M12 8h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/>}</span>
       <h2 id="confirm-title">{title}</h2>
       <p id="confirm-msg">{message}</p>
-      {password && <form id="confirm-form" onSubmit={e => { e.preventDefault(); if (value) onClose(true); }}><input ref={inputRef} type="password" autoComplete="off" aria-label={placeholder} placeholder={placeholder} value={value} onChange={e => setValue(e.target.value)}/></form>}
+      {password && <form id="confirm-form" onSubmit={e => { e.preventDefault(); if (valid) onClose(true); }}><input ref={inputRef} type="password" autoComplete={confirm ? "new-password" : "off"} aria-label={placeholder} placeholder={placeholder} value={value} onChange={e => setValue(e.target.value)}/>{confirm && <><input type="password" autoComplete="new-password" aria-label={confirmPlaceholder} placeholder={confirmPlaceholder} value={again} onChange={e => setAgain(e.target.value)}/><small className={"hint" + (again && value !== again ? " bad" : "")}>{value.length < 10 ? hints?.short : again && value !== again ? hints?.mismatch : " "}</small></>}</form>}
       <footer>
         <button type="button" ref={cancelRef} className="ghost" onClick={() => onClose(false)}>{cancelLabel}</button>
-        <button type={password ? "submit" : "button"} form={password ? "confirm-form" : undefined} disabled={password && !value} className={danger ? "btn-danger" : "primary"} onClick={password ? undefined : () => onClose(true)}>{okLabel}</button>
+        <button type={password ? "submit" : "button"} form={password ? "confirm-form" : undefined} disabled={!valid} className={danger ? "btn-danger" : "primary"} onClick={password ? undefined : () => onClose(true)}>{okLabel}</button>
       </footer>
     </div>
   </div>;
