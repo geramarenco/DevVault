@@ -35,6 +35,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           DEVVAULT_GDRIVE_CLIENT_ID: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_ID }}
           DEVVAULT_GDRIVE_CLIENT_SECRET: ${{ secrets.DEVVAULT_GDRIVE_CLIENT_SECRET }}
         with:
@@ -46,3 +48,4 @@ jobs:
             - `*.msi`
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true

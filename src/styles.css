@@ -243,3 +243,4 @@ body.resizing{cursor:col-resize;user-select:none}
 @media(max-width:600px){.app{grid-template-columns:1fr}}
 .gate-logo{width:56px;height:56px;flex:none;object-fit:contain}
 .empty-logo{width:72px;height:72px;object-fit:contain}
+aside footer button{position:relative}.update-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#f2c46d;box-shadow:0 0 0 3px #f2c46d33;margin-left:auto;align-self:center}.accent{color:#77e1a8}

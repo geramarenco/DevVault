@@ -9,7 +9,9 @@ import { emptyVault } from "./types";
 import { translate, type Language } from "./i18n";
 import "./styles.css";
 import logo from "./assets/logo.png";
+import { useUpdater } from "./updater";
 
+const appVersion = __APP_VERSION__;
 const uid = () => crypto.randomUUID();
 const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 type DriveStatus = { configured: boolean; connected: boolean; account: string | null };
@@ -38,6 +40,8 @@ function App() {
   useEffect(() => { try { localStorage.setItem(WIDTHS_KEY, JSON.stringify(widths)); } catch {} }, [widths]);
   const [language, setLanguage] = useState<Language>(() => (localStorage.getItem("devvault-language") as Language) || "es");
   const t = (text: string) => translate(language, text);
+  const updater = useUpdater();
+  const hasUpdate = !!updater.update && updater.state !== "error";
   const [vault, setVault] = useState<Vault | null>(null), [path, setPath] = useState<string | null>(null), [password, setPassword] = useState(""), [isNew, setIsNew] = useState(false);
   const [query, setQuery] = useState(""), [selected, setSelected] = useState<string | null>(null), [editing, setEditing] = useState<Credential | null>(null), [revealed, setRevealed] = useState<Set<string>>(new Set()), [notice, setNotice] = useState(""), [settingsOpen, setSettingsOpen] = useState(false), [project, setProject] = useState<string | null>(null), [copied, setCopied] = useState<string | null>(null);
   const timer = useRef<number>();
@@ -175,7 +179,7 @@ function App() {
         {projects.map(p=><button key={p} className={project===p && !settingsOpen ? "nav-active" : ""} onClick={pick(()=>{setProject(p); setSelected(null);})} onContextMenu={openMenu([{ label: t("Exportar proyecto…"), run: () => exportShare(vault.credentials.filter(c=>c.project.trim()===p), p) }, { label: t("Exportar proyecto sin contraseña…"), run: () => exportShare(vault.credentials.filter(c=>c.project.trim()===p), p, true) }, { label: t("Importar credenciales…"), run: importShare }])}><Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><span>{p}</span><b>{projectCount(p)}</b></button>)}
       </nav>
       <footer>
-        <button className={settingsOpen ? "nav-active" : ""} onClick={()=>setSettingsOpen(true)}><Icon d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6"/><span>{t("Configuración")}</span></button>
+        <button className={settingsOpen ? "nav-active" : ""} onClick={()=>setSettingsOpen(true)}><Icon d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6"/><span>{t("Configuración")}</span>{hasUpdate && <i className="update-dot" title={t("Nueva versión disponible") + ": v" + updater.update!.version} aria-label={t("Nueva versión disponible")}/>}</button>
         <button className="lock" onClick={lock}><Icon d="M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4"/><span>{t("Bloquear")}</span><kbd>Ctrl L</kbd></button>
       </footer>
       <Resizer onDrag={dx=>setWidths(w=>({...w, side: clamp(w.side+dx, 160, 420)}))}/>
@@ -201,6 +205,8 @@ function App() {
         <header><h2>{t("Configuración")}</h2></header>
         <article className="setting-row"><div><strong>{t("Idioma")}</strong><p>{t("Elige el idioma de la interfaz.")}</p></div>{languagePicker}</article>
         <article className="setting-row"><div><strong>{t("Bloqueo automático")}</strong><p>{t("Tras este tiempo sin actividad, la bóveda se bloquea.")}</p></div><select className="language" aria-label={t("Bloqueo automático")} value={vault.settings.autoLockMinutes} onChange={e=>persist({...vault, settings:{...vault.settings, autoLockMinutes:Number(e.target.value)}})}>{[1,5,10,15,30,60].map(m=><option key={m} value={m}>{m} min</option>)}</select></article>
+        <article className="setting-row"><div><strong>{t("Actualizaciones automáticas")}</strong><p>{t("Busca y descarga nuevas versiones en segundo plano.")}</p></div><label className="switch"><input type="checkbox" role="switch" checked={updater.auto} onChange={e=>updater.setAuto(e.target.checked)}/><span aria-hidden="true"/></label></article>
+        <article className="setting-row"><div><strong>{t("Versión")} v{appVersion}</strong><p>{updater.update && updater.state !== "uptodate" ? <>{t("Nueva versión disponible")}: <b className="accent">v{updater.update.version}</b>{updater.state !== "available" && <> · {t({"checking":"Buscando actualizaciones…","uptodate":"Tienes la última versión.","downloading":"Descargando…","ready":"Lista para instalar.","installing":"Instalando…","error":"No se pudo comprobar o instalar la actualización."}[updater.state as string] ?? "")}</>}</> : updater.state === "idle" ? t("Comprueba si hay una versión nueva.") : t({"checking":"Buscando actualizaciones…","uptodate":"Tienes la última versión.","downloading":"Descargando…","ready":"Lista para instalar.","installing":"Instalando…","error":"No se pudo comprobar o instalar la actualización."}[updater.state as string] ?? "")}</p></div><div className="actions">{updater.update && ["available","ready","error"].includes(updater.state) ? <button className="primary" onClick={updater.install}>{t("Actualizar y reiniciar")}</button> : <button disabled={["checking","downloading","installing"].includes(updater.state)} onClick={updater.checkNow}>{t("Buscar actualizaciones")}</button>}</div></article>
         <article className="setting-row"><div><strong>{t("Archivo de la bóveda")}</strong><p className="mono" title={path ?? ""}>{path}</p></div></article>
         <CloudSection language={language} status={drive} files={driveFiles} busy={driveBusy} connecting={driveConnecting} onCancelConnect={cancelConnect} settings={cloud} onConnect={connectDrive} onDisconnect={disconnectDrive} onUpload={()=>uploadCloud(cloud.keep)} onRestore={restoreFromDrive} onSettings={c=>persist({...vault, settings:{...vault.settings, cloudBackup:c}})}/>
         <ChangePassword language={language} onChange={async (current, next) => { if (!path || !vault || current !== masterKey.current) return false; const tmp = path + ".tmp"; await writeTextFile(tmp, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(vault), password: next })); await rename(tmp, path); masterKey.current = next; setNotice("Contraseña maestra actualizada."); return true; }}/>
