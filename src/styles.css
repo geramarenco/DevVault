@@ -207,7 +207,7 @@ aside footer .lock{margin-top:6px}
 /* toast + overlay */
 .toast{border:1px solid #35503f;font-size:13px}
 .toast.bad{background:#3a2422;border-color:#5c3531;color:#f8d3cd}
-.overlay{background:#060c08c4;animation:fade .2s ease-out}
+.overlay{background:#060c08c4;animation:fade .2s ease-out;z-index:50}
 .editor{animation:sheet-in .28s cubic-bezier(.16,1,.3,1);box-shadow:0 24px 60px #0008}
 @keyframes fade{from{opacity:0}}
 @media(max-width:1180px){.new kbd{display:none}}
@@ -244,3 +244,14 @@ body.resizing{cursor:col-resize;user-select:none}
 .gate-logo{width:56px;height:56px;flex:none;object-fit:contain}
 .empty-logo{width:72px;height:72px;object-fit:contain}
 aside footer button{position:relative}.update-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#f2c46d;box-shadow:0 0 0 3px #f2c46d33;margin-left:auto;align-self:center}.accent{color:#77e1a8}
+
+.field-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.json-import { display: grid; gap: 8px; margin-bottom: 8px; }
+.json-import textarea { width: 100%; font-family: ui-monospace, monospace; resize: vertical; }
+.json-import > div { display: flex; gap: 8px; justify-content: flex-end; }
+
+.cloud li .row-actions{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.cloud li .row-actions .icon-btn{padding:6px;display:inline-flex}
+.cloud li .row-actions .icon-btn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cloud li .row-actions .icon-btn.danger{color:#f19a8e}
+.cloud li .row-actions .icon-btn.danger:hover:not(:disabled){background:#f19a8e1f;color:#f6b3aa}

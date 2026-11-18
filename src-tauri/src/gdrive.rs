@@ -223,3 +223,12 @@ pub async fn gdrive_download_backup(state: State<'_, DriveState>, id: String) ->
   let token = access_token(&state).await?;
   check(http().get(format!("{API}/files/{id}?alt=media")).bearer_auth(&token).send().await.map_err(|e| e.to_string())?).await?.text().await.map_err(|e| e.to_string())
 }
+
+/// Moves a backup to the Drive trash (recoverable from Drive for 30 days).
+#[tauri::command]
+pub async fn gdrive_delete_backup(state: State<'_, DriveState>, id: String) -> Result<(), String> {
+  if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { return Err("Identificador inválido".into()); }
+  let token = access_token(&state).await?;
+  check(http().patch(format!("{API}/files/{id}")).bearer_auth(&token).json(&serde_json::json!({ "trashed": true })).send().await.map_err(|e| e.to_string())?).await?;
+  Ok(())
+}

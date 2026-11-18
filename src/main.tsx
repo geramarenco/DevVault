@@ -85,6 +85,7 @@ function App() {
   const disconnectDrive = async () => { if (!(await confirmDialog(t("Los backups ya subidos seguirán en tu Google Drive. ¿Desconectar la cuenta de este equipo?"), { title: t("Desconectar Google Drive"), okLabel: t("Desconectar"), cancelLabel: t("Cancelar") }))) return; await invoke("gdrive_disconnect"); await refreshDrive(); setNotice("Google Drive desconectado."); };
   const restoreContent = async (content: string) => { if (!path) return; const secret = await passwordDialog(t("Introduce la contraseña del backup para validar su integridad:"), { title: t("Importar backup"), okLabel: t("Validar"), cancelLabel: t("Cancelar"), placeholder: t("Contraseña del backup") }); if (!secret) return; try { const restored = JSON.parse(await invoke<string>("decrypt_vault", { encrypted: content, password: secret })); if (restored?.kind === SHARE_KIND || !Array.isArray(restored?.credentials)) return setNotice("El backup no es válido o la contraseña es incorrecta."); if (!(await confirmDialog(t("El backup es válido. ¿Reemplazar la bóveda actual?"), { title: t("Importar backup"), kind: "warning", okLabel: t("Reemplazar"), cancelLabel: t("Cancelar") }))) return; await writeTextFile(path, content); masterKey.current = secret; setVault(restored); setNotice("Backup restaurado correctamente."); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
   const restoreFromDrive = async (file: DriveFile) => { setDriveBusy(true); let content: string; try { content = await invoke<string>("gdrive_download_backup", { id: file.id }); } catch { setDriveBusy(false); return setNotice("No se pudo descargar el backup de Google Drive."); } setDriveBusy(false); await restoreContent(content); };
+  const deleteFromDrive = async (file: DriveFile) => { if (!(await confirmDialog(t("¿Eliminar este backup de Google Drive? Se moverá a la papelera de Drive."), { title: t("Eliminar backup"), kind: "warning", okLabel: t("Eliminar"), cancelLabel: t("Cancelar") }))) return; setDriveBusy(true); try { await invoke("gdrive_delete_backup", { id: file.id }); await refreshDrive(); setNotice("Backup eliminado de Google Drive."); } catch { setNotice("No se pudo eliminar el backup de Google Drive."); } finally { setDriveBusy(false); } };
   const restore = async () => { const source = await open({ filters: [{ name: "Bóveda cifrada", extensions: ["dvault"] }], multiple: false }); if (typeof source !== "string" || !path) return; try { await restoreContent(await readTextFile(source)); } catch { setNotice("El backup no es válido o la contraseña es incorrecta."); } };
   // Shared exports: credentials only (no settings), encrypted with a one-off password chosen by the user, never the master one.
   const exportShare = async (creds: Credential[], label: string, plain = false) => {
@@ -208,7 +209,7 @@ function App() {
         <article className="setting-row"><div><strong>{t("Actualizaciones automáticas")}</strong><p>{t("Busca y descarga nuevas versiones en segundo plano.")}</p></div><label className="switch"><input type="checkbox" role="switch" checked={updater.auto} onChange={e=>updater.setAuto(e.target.checked)}/><span aria-hidden="true"/></label></article>
         <article className="setting-row"><div><strong>{t("Versión")} v{appVersion}</strong><p>{updater.update && updater.state !== "uptodate" ? <>{t("Nueva versión disponible")}: <b className="accent">v{updater.update.version}</b>{updater.state !== "available" && <> · {t({"checking":"Buscando actualizaciones…","uptodate":"Tienes la última versión.","downloading":"Descargando…","ready":"Lista para instalar.","installing":"Instalando…","error":"No se pudo comprobar o instalar la actualización."}[updater.state as string] ?? "")}</>}</> : updater.state === "idle" ? t("Comprueba si hay una versión nueva.") : t({"checking":"Buscando actualizaciones…","uptodate":"Tienes la última versión.","downloading":"Descargando…","ready":"Lista para instalar.","installing":"Instalando…","error":"No se pudo comprobar o instalar la actualización."}[updater.state as string] ?? "")}</p></div><div className="actions">{updater.update && ["available","ready","error"].includes(updater.state) ? <button className="primary" onClick={updater.install}>{t("Actualizar y reiniciar")}</button> : <button disabled={["checking","downloading","installing"].includes(updater.state)} onClick={updater.checkNow}>{t("Buscar actualizaciones")}</button>}</div></article>
         <article className="setting-row"><div><strong>{t("Archivo de la bóveda")}</strong><p className="mono" title={path ?? ""}>{path}</p></div></article>
-        <CloudSection language={language} status={drive} files={driveFiles} busy={driveBusy} connecting={driveConnecting} onCancelConnect={cancelConnect} settings={cloud} onConnect={connectDrive} onDisconnect={disconnectDrive} onUpload={()=>uploadCloud(cloud.keep)} onRestore={restoreFromDrive} onSettings={c=>persist({...vault, settings:{...vault.settings, cloudBackup:c}})}/>
+        <CloudSection language={language} status={drive} files={driveFiles} busy={driveBusy} connecting={driveConnecting} onCancelConnect={cancelConnect} settings={cloud} onConnect={connectDrive} onDisconnect={disconnectDrive} onUpload={()=>uploadCloud(cloud.keep)} onRestore={restoreFromDrive} onDelete={deleteFromDrive} onSettings={c=>persist({...vault, settings:{...vault.settings, cloudBackup:c}})}/>
         <ChangePassword language={language} onChange={async (current, next) => { if (!path || !vault || current !== masterKey.current) return false; const tmp = path + ".tmp"; await writeTextFile(tmp, await invoke<string>("encrypt_vault", { plaintext: JSON.stringify(vault), password: next })); await rename(tmp, path); masterKey.current = next; setNotice("Contraseña maestra actualizada."); return true; }}/>
       </section>
       : current ? <article className="sheet" key={current.id}>
@@ -241,7 +242,7 @@ function App() {
     {menu && <ContextMenu {...menu} onClose={()=>setMenu(null)}/>}
     {dialog && <ConfirmDialog {...dialog} onClose={v=>{dialog.resolve(v); setDialog(null);}}/>}
     {editing && <Editor credential={editing} isNew={!vault.credentials.some(c=>c.id===editing.id)} projects={projects} environments={distinct(vault.credentials.map(c=>c.environment))} setCredential={setEditing} onSave={saveCredential} onClose={()=>setEditing(null)} language={language}/>}
-    {notice && <output className={"toast" + (/^(No se|El backup no|Cambios no)/.test(notice) ? " bad" : "")} role="status">{t(notice)}</output>}
+    {notice && <output className={"toast" + (/^(No se|El backup no|Cambios no|Backup eliminado)/.test(notice) ? " bad" : "")} role="status">{t(notice)}</output>}
   </main>;
 }
 type MenuItem = { label: string; run: () => void; sep?: undefined } | { sep: true; label?: undefined; run?: undefined };
@@ -288,7 +289,7 @@ function ConfirmDialog({ title, message, okLabel, cancelLabel, kind, password, p
     </div>
   </div>;
 }
-function CloudSection({ language, status, files, busy, connecting, onCancelConnect, settings, onConnect, onDisconnect, onUpload, onRestore, onSettings }: { language: Language; status: DriveStatus | null; files: DriveFile[] | null; busy: boolean; connecting: boolean; onCancelConnect: () => void; settings: CloudBackupSettings; onConnect: () => void; onDisconnect: () => void; onUpload: () => void; onRestore: (f: DriveFile) => void; onSettings: (c: CloudBackupSettings) => void }) {
+function CloudSection({ language, status, files, busy, connecting, onCancelConnect, settings, onConnect, onDisconnect, onUpload, onRestore, onDelete, onSettings }: { language: Language; status: DriveStatus | null; files: DriveFile[] | null; busy: boolean; connecting: boolean; onCancelConnect: () => void; settings: CloudBackupSettings; onConnect: () => void; onDisconnect: () => void; onUpload: () => void; onRestore: (f: DriveFile) => void; onDelete: (f: DriveFile) => void; onSettings: (c: CloudBackupSettings) => void }) {
   const t = (s: string) => translate(language, s);
   const when = (f: DriveFile) => { const m = f.name.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/); const d = m ? new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]) : f.createdTime ? new Date(f.createdTime) : null; return d ? d.toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }) : f.name; };
   const kb = (f: DriveFile) => f.size ? `${Math.max(1, Math.round(Number(f.size) / 1024))} KB` : "";
@@ -309,7 +310,7 @@ function CloudSection({ language, status, files, busy, connecting, onCancelConne
       <div className="cloud-list">
         <h3>{t("Backups en Drive")}</h3>
         {files === null ? <p className="hint">{t("No se pudo cargar la lista.")}</p> : !files.length ? <p className="hint">{t("Aún no hay backups en Drive.")}</p>
-        : <ul>{files.map(f=><li key={f.id}><span><b>{when(f)}</b><small>{f.name} {kb(f)}</small></span><button className="ghost" disabled={busy} onClick={()=>onRestore(f)}>{t("Restaurar")}</button></li>)}</ul>}
+        : <ul>{files.map(f=><li key={f.id}><span><b>{when(f)}</b><small>{f.name} {kb(f)}</small></span><span className="row-actions"><button className="ghost icon-btn danger" disabled={busy} onClick={()=>onDelete(f)} title={t("Eliminar")} aria-label={t("Eliminar")}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button><button className="ghost" disabled={busy} onClick={()=>onRestore(f)}>{t("Restaurar")}</button></span></li>)}</ul>}
       </div>
     </>}
   </section>;
@@ -338,11 +339,27 @@ const initials = (s: string) => (s.trim().split(/[\s._-]+/).filter(Boolean).slic
 const envTone = (e: string) => { const v = norm(e); return /prod|prd|live/.test(v) ? "prod" : /stag|qa|test|uat|pre/.test(v) ? "stage" : "dev"; };
 const Env = ({ value }: { value: string }) => value.trim() ? <span className={"env " + envTone(value)}>{value}</span> : null;
 function Field({field,shown,copied,onReveal,onCopy,language}:{field:VaultField;shown:boolean;copied:boolean;onReveal:()=>void;onCopy:()=>void;language:Language}) { const hidden=field.sensitive&&!shown, t=(s:string)=>translate(language,s); return <article className={"field" + (hidden ? " masked" : "")}><label>{field.name || t("Sin nombre")}{field.sensitive && <small>{t("Secreto")}</small>}</label><pre onDoubleClick={onCopy} title={t("Doble clic para copiar")}>{hidden ? "•".repeat(Math.min(Math.max(field.value.length, 8), 16)) : field.value}</pre><div>{field.sensitive&&<button className="icon" title={shown?t("Ocultar"):t("Ver")} aria-label={shown?t("Ocultar"):t("Ver")} aria-pressed={shown} onClick={onReveal}>{shown?<Icon d="M3 3l18 18M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/>:<Icon d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>}</button>}<button className={"icon" + (copied ? " ok" : "")} title={copied?t("Copiado"):t("Copiar")} aria-label={copied?t("Copiado"):t("Copiar")} onClick={onCopy}>{copied?<Icon d="M5 12.5l4.5 4.5L19 7.5"/>:<Icon d="M9 9h12v12H9zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>}</button></div></article> }
+const SENSITIVE_KEY = /secret|password|passwd|pwd|private|api_?key|access_?key|credential/i;
+function jsonToFields(text: string): VaultField[] {
+  let data: any = JSON.parse(text);
+  // Unwrap single-key wrappers like {"installed": {...}} or {"web": {...}}
+  while (data && typeof data === "object" && !Array.isArray(data)) { const keys = Object.keys(data); if (keys.length === 1 && data[keys[0]] && typeof data[keys[0]] === "object" && !Array.isArray(data[keys[0]])) data = data[keys[0]]; else break; }
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Object.keys(data).length) throw new Error("El JSON debe ser un objeto con al menos una clave.");
+  const out: VaultField[] = [];
+  const walk = (obj: any, prefix: string) => { for (const [k, v] of Object.entries(obj)) { const name = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object" && !Array.isArray(v)) walk(v, name);
+    else { const value = Array.isArray(v) ? (v.every(x => x === null || typeof x !== "object") ? v.join("\n") : JSON.stringify(v, null, 2)) : v == null ? "" : String(v); const sensitive = SENSITIVE_KEY.test(k);
+      out.push({ id: uid(), name, value, sensitive, fieldType: sensitive ? "secret" : "multiline" }); } } };
+  walk(data, "");
+  return out;
+}
 const distinct = (values: string[]) => [...new Set(values.map(v=>v.trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
 function Editor({credential,isNew,projects,environments,setCredential,onSave,onClose,language}:{credential:Credential;isNew:boolean;projects:string[];environments:string[];setCredential:(c:Credential)=>void;onSave:()=>void;onClose:()=>void;language:Language}) {
   const t=(s:string)=>translate(language,s), set=(key:keyof Credential,value:any)=>setCredential({...credential,[key]:value});
   const field=(i:number,key:keyof VaultField,value:any)=>set("fields",credential.fields.map((f,n)=>n===i?{...f,[key]:value}:f));
   const move=(i:number,dir:number)=>{const next=[...credential.fields]; [next[i],next[i+dir]]=[next[i+dir],next[i]]; set("fields",next);};
+  const [jsonOpen,setJsonOpen]=useState(false), [jsonText,setJsonText]=useState(""), [jsonError,setJsonError]=useState("");
+  const importJson=()=>{try{const added=jsonToFields(jsonText); const kept=credential.fields.filter(f=>f.name.trim()||f.value.trim()); set("fields",[...kept,...added]); setJsonText(""); setJsonError(""); setJsonOpen(false);}catch(e:any){setJsonError(e instanceof SyntaxError?"JSON inválido.":e?.message||"JSON inválido.");}};
   return <div className="overlay"><form className="editor" onSubmit={e=>{e.preventDefault();onSave()}}>
     <header><h2>{isNew ? t("Nueva credencial") : t("Editar credencial")}</h2><button type="button" onClick={onClose}>×</button></header>
     <div className="grid">
@@ -365,7 +382,12 @@ function Editor({credential,isNew,projects,environments,setCredential,onSave,onC
       </div>
       <textarea placeholder={t("Valor")} spellCheck={false} value={f.value} onChange={e=>field(i,"value",e.target.value)}/>
     </div>)}
-    <button type="button" onClick={()=>set("fields",[...credential.fields,{id:uid(),name:"",fieldType:"secret",value:"",sensitive:true}])}>{t("+ Agregar campo")}</button><footer><button type="button" onClick={onClose}>{t("Cancelar")}</button><button className="primary" type="submit">{t("Guardar")}</button></footer>
+    {jsonOpen&&<div className="json-import">
+      <textarea autoFocus spellCheck={false} rows={8} placeholder={t("Pega aquí un objeto JSON. Cada clave se convierte en un campo.")} value={jsonText} onChange={e=>{setJsonText(e.target.value); setJsonError("");}}/>
+      {jsonError&&<small className="hint bad" role="alert">{t(jsonError)}</small>}
+      <div><button type="button" onClick={()=>{setJsonOpen(false); setJsonError("");}}>{t("Cancelar")}</button><button type="button" className="primary" disabled={!jsonText.trim()} onClick={importJson}>{t("Agregar campos")}</button></div>
+    </div>}
+    <div className="field-add"><button type="button" onClick={()=>set("fields",[...credential.fields,{id:uid(),name:"",fieldType:"secret",value:"",sensitive:true}])}>{t("+ Agregar campo")}</button>{!jsonOpen&&<button type="button" onClick={()=>setJsonOpen(true)}>{t("Importar JSON")}</button>}</div><footer><button type="button" onClick={onClose}>{t("Cancelar")}</button><button className="primary" type="submit">{t("Guardar")}</button></footer>
   </form></div>
 }
 function TagInput({tags,onChange,placeholder}:{tags:string[];onChange:(t:string[])=>void;placeholder:string}) {
