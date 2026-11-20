@@ -387,7 +387,7 @@ function Editor({credential,isNew,projects,environments,setCredential,onSave,onC
       {jsonError&&<small className="hint bad" role="alert">{t(jsonError)}</small>}
       <div><button type="button" onClick={()=>{setJsonOpen(false); setJsonError("");}}>{t("Cancelar")}</button><button type="button" className="primary" disabled={!jsonText.trim()} onClick={importJson}>{t("Agregar campos")}</button></div>
     </div>}
-    <div className="field-add"><button type="button" onClick={()=>set("fields",[...credential.fields,{id:uid(),name:"",fieldType:"secret",value:"",sensitive:true}])}>{t("+ Agregar campo")}</button>{!jsonOpen&&<button type="button" onClick={()=>setJsonOpen(true)}>{t("Importar JSON")}</button>}</div><footer><button type="button" onClick={onClose}>{t("Cancelar")}</button><button className="primary" type="submit">{t("Guardar")}</button></footer>
+    <div className="field-add"><button type="button" className="ghost" onClick={()=>set("fields",[...credential.fields,{id:uid(),name:"",fieldType:"secret",value:"",sensitive:true}])}>{t("+ Agregar campo")}</button>{!jsonOpen&&<button type="button" className="ghost" onClick={()=>setJsonOpen(true)}>{t("Importar JSON")}</button>}</div><footer><button type="button" onClick={onClose}>{t("Cancelar")}</button><button className="primary" type="submit">{t("Guardar")}</button></footer>
   </form></div>
 }
 function TagInput({tags,onChange,placeholder}:{tags:string[];onChange:(t:string[])=>void;placeholder:string}) {
